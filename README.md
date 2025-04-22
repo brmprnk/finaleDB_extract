@@ -1,6 +1,6 @@
 # finaleDB_extract
 Download anonymized cfDNA files in frag.tsv.bgz file format and important sample metadata.
-Then convert those using Fragmentstein in a parallelized manner.
+Then convert those to .bam files using Fragmentstein in a parallelized manner, including coverage .bw files to assert coverage tracks.
 
 ## Instructions
 1.
