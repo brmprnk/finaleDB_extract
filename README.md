@@ -3,7 +3,7 @@ Download anonymized cfDNA files in frag.tsv.bgz file format and important sample
 Then convert those to .bam files using Fragmentstein in a parallelized manner, including coverage .bw files to assert coverage tracks.
 
 ## Requirements
-- Python package ```requests``` 
+- Python packages ```requests, pandas, bioconda::deeptools```
 - A reference genome (hg38). The code by default expectes a folder /reference_genome in the project directory containing hg38.analysisSet.fa, hg38.analysisSet.fa.fai as reference genome files.
 These file names can be edited in stein.sh or stein_parallel.sh for that matter.
 
