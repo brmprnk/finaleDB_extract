@@ -1,0 +1,185 @@
+#!/bin/bash
+#
+# fragmentstein_finaledb.sh: convert one FinaleDB hg38 fragment file (<ID>.hg38.frag.tsv.bgz) to a coordinate-sorted,
+# indexed BAM (<ID>.hg38.frag.tsv.bam + .bai) with read sequences taken from the reference genome.
+#
+# Derived from Fragmentstein v2023.4a, scripts/fragmentstein.sh, upstream commit d62329c (18 Jul 2023), by Zsolt Balazs and Todor Gitchev,
+# https://github.com/uzh-dqbm-cmi/fragmentstein, GPL-3.0. Cite: Balazs Z, Gitchev T, Ivankovic I, Krauthammer M.
+# Fragmentstein - facilitating data reuse for cell-free DNA fragment analysis. Bioinformatics 40(1):btae017 (2024),
+# doi:10.1093/bioinformatics/btae017.
+#
+# This modified copy is distributed under the GNU General Public License v3.0 (see LICENSE). Changes with respect to
+# upstream (the full diff is fragmentstein/upstream.diff; fragmentstein/README.md explains each change):
+#   1. Defaults set to the values used for the original BAMs (recorded in each BAM's @PG line): read length 101, base
+#      quality F, sorting and indexing on, IUPAC codes kept, mapping-quality filter 5 (fragments with MAPQ > 5 are
+#      kept) and default mapping quality 5. -qf/-qd remain options: part of the Cristiano records were converted with
+#      -qf 0 -qd 0 (lists/cris_conversion_settings.csv). Upstream defaults are -qf 30 -qd 60 and no sorting.
+#      -qd does not change the reads: bedToBam's default MAPQ is replaced by the FinaleDB MAPQ column below.
+#   2. FinaleDB .tsv.bgz input only (the upstream BED/BEDPE branches are removed) and the output path is required.
+#   3. Temporary files are <output without .bam>.tmp.bed / .tmp.sam / .tmp.sam.header (upstream: <output>.tmp.bed ...),
+#      next to the output BAM or in --temp DIR.
+#   4. Optional bigWig coverage track with deepTools bamCoverage (--bigwig); optional.
+#   5. The @PG line records this script's name and version (the 2025 batch copy left VN and the script name empty).
+#   6. Checks added around the unchanged conversion: an empty input stops with exit code 3, and the finished BAM must
+#      hold exactly one read per line of the temporary BED file (two reads per fragment that passed the filter).
+# The conversion itself (the awk, bedToBam, bedtools getfasta and samtools commands) is unchanged from upstream; the
+# pipelines deliberately run without pipefail, as upstream, so that their exit behaviour is the same.
+
+VERSION=2023.4a
+MODIFIED="finaledb-1.0.0"
+
+usage()
+{
+    echo "Fragmentstein v${VERSION} (modified: ${MODIFIED})"
+    echo "Usage: $0 -i <ID>.hg38.frag.tsv.bgz -o <ID>.hg38.frag.tsv.bam -g hg38.analysisSet.fa [-c chrom_sizes] [-qf N] [-qd N] [-t threads] [--temp DIR] [--bigwig]"
+    echo "  -i, --input FILE        FinaleDB fragment file (block-gzipped chrom, start, end, mapq, strand)"
+    echo "  -o, --output FILE       output BAM (sorted, indexed)"
+    echo "  -g, --genome FILE       reference fasta (hg38 analysis set; a samtools faidx index .fai must exist next to it)"
+    echo "  -c, --chrom_sizes FILE  chromosome sizes for the BAM header. Default: <genome>.fai"
+    echo "  -qf, --map_quality_filter N   keep fragments with MAPQ > N. Default: 5"
+    echo "  -qd, --map_quality_default N  bedToBam default MAPQ (replaced by the FinaleDB MAPQ). Default: 5"
+    echo "  -t, --threads N         samtools threads. Default: 4"
+    echo "  --temp DIR              folder for the temporary BED/SAM files. Default: the output folder"
+    echo "  --bigwig                also write <output without .bam>.bw with deepTools bamCoverage"
+}
+
+READ_LENGTH=101
+MAP_QUALITY_FILTER=5
+MAP_QUALITY_DEFAULT=5
+BASE_QUALITY="F"
+SORT=true
+INCOMPLETE_N=false
+THREADS=4
+TEMP=
+BIGWIG=false
+INPUT=
+OUTPUT=
+GENOME=
+CHROM_SIZES=
+
+while [[ "$1" != "" ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        -i|--input) INPUT="$2"; shift 2 ;;
+        -o|--output) OUTPUT="$2"; shift 2 ;;
+        -g|--genome) GENOME="$2"; shift 2 ;;
+        -c|--chrom_sizes) CHROM_SIZES="$2"; shift 2 ;;
+        -qf|--map_quality_filter) MAP_QUALITY_FILTER="$2"; shift 2 ;;
+        -qd|--map_quality_default) MAP_QUALITY_DEFAULT="$2"; shift 2 ;;
+        -t|--threads) THREADS="$2"; shift 2 ;;
+        --temp) TEMP="$2"; shift 2 ;;
+        --bigwig) BIGWIG=true; shift 1 ;;
+        *) echo "ERROR: $0: unknown argument \"$1\"" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+[[ -n "${CHROM_SIZES}" ]] || CHROM_SIZES="${GENOME}.fai"
+for _f in "${INPUT}" "${GENOME}" "${CHROM_SIZES}"; do
+    if [[ ! -f "${_f}" ]]; then
+        echo "ERROR: input file not found: '${_f}'" >&2; usage >&2; exit 1
+    fi
+done
+if [[ -z "${OUTPUT}" || "${OUTPUT}" != *.bam ]]; then
+    echo "ERROR: -o must name the output .bam file" >&2; exit 1
+fi
+if [[ "${INPUT}" != *.tsv.bgz ]]; then
+    echo "ERROR: expected a FinaleDB .tsv.bgz fragment file, got ${INPUT}" >&2; exit 1
+fi
+# An empty FinaleDB record is a 28-byte BGZF end-of-file block (see README, "Records without hg38 data")
+if [[ -z "$(gunzip -c "${INPUT}" | head -c 1)" ]]; then
+    echo "ERROR: ${INPUT} contains no fragments; not converting" >&2; exit 3
+fi
+
+if [[ -z "${TEMP}" ]]; then
+    TMPBED="${OUTPUT/%.bam/.tmp.bed}"
+else
+    mkdir -p "${TEMP}"
+    TMPBED="${TEMP}/$(basename -- "${OUTPUT/%.bam/.tmp.bed}")"
+fi
+TMPSAM=${TMPBED/%.bed/.sam}
+
+echo "Processing ${INPUT} -> ${OUTPUT}"
+echo "Unzipping, converting FinaleDB file ${INPUT} and accepting mapping quality>${MAP_QUALITY_FILTER} to BED file format ..."
+echo "Creating paired reads and add fragment length into a temp BED file ${TMPBED} ..."
+
+# ---- upstream commands from here on. Differences: the variable name TMPBED (upstream: INPUTBED2), the read count for
+# ---- the check below, and the failure branches (a failed conversion removes the partial BAM; sort/index failures stop)
+gunzip -c "$INPUT" | \
+awk -v mqf=${MAP_QUALITY_FILTER} '$4>mqf' | \
+awk -F"\t" -v OFS="\t" '{{k=$4; l=$5; $4="F"++i; $5=k; $6=l}}1' | \
+awk -v r="${READ_LENGTH}" 'BEGIN{FS=OFS="\t"}
+    { x= $3; f= $3-$2;
+    if ($2+r < $3) $3= $2+r;
+    $6= "+";
+    $7= f;
+    }
+    {print}
+    { if (x-r > $2) $2= x-r;
+    $3= x;
+    $6= "-";
+    $7= f;
+    }
+    {print}' > "${TMPBED}"
+N_READS_EXPECTED=$(wc -l < "${TMPBED}")   # added check (not upstream)
+
+echo "Create intermediate SAM file ${TMPSAM} from ${TMPBED} for chromosome_sizes:${CHROM_SIZES} and default map quality: ${MAP_QUALITY_DEFAULT} ..."
+bedToBam -i "${TMPBED}" -mapq "${MAP_QUALITY_DEFAULT}" -g "${CHROM_SIZES}" | \
+samtools view -@ ${THREADS} - | cut -f-8 | \
+paste - <(cut -f5,7 "${TMPBED}") | \
+awk 'BEGIN{FS=OFS="\t"} { print $1,$2,$3,$4,$9,$6,$7,$8,$10 }' > "${TMPSAM}"
+
+# extract header, add fragmentstein info
+echo "Creating header for ${TMPSAM} ..."
+HEADER_INFO="@PG	ID:fragmentstein	PN:fragmentstein	VN:${VERSION}-${MODIFIED}	CL:$(basename -- "$0") -i ${INPUT} -o ${OUTPUT} -g ${GENOME} -c ${CHROM_SIZES} -r ${READ_LENGTH} -qf ${MAP_QUALITY_FILTER} -qd ${MAP_QUALITY_DEFAULT} -s ${SORT} -t ${THREADS}"
+bedToBam -i "${TMPBED}" -mapq "${MAP_QUALITY_DEFAULT}" -g "${CHROM_SIZES}" | \
+samtools view -H - | \
+awk -v hi="${HEADER_INFO}" 'NR==2 {print hi}1' > "${TMPSAM}.header"
+
+echo "Get sequences from reference fasta ${GENOME} with read length ${READ_LENGTH} for intermediate files ${TMPBED} and ${TMPSAM} ... "
+echo "if read fwd->flag=99, if read rev -> flag=147, set mate start, set mate chr to same as this read and set base quality to F ... "
+bedtools getfasta -name -fi "${GENOME}" -bed "${TMPBED}" | grep -v ">" | tr '[:lower:]' '[:upper:]' | \
+paste "${TMPSAM}" - | \
+awk -v r="${READ_LENGTH}" -v n="${INCOMPLETE_N}" -v bq="${BASE_QUALITY}" 'BEGIN{FS=OFS="\t"} {
+        if ($2 == 0) {
+            $2= 99;
+            if ($4+$9-r > $4) $8= $4+$9-r; else $8= $4;
+        } else {
+            $2= 147;
+            if ($4-$9+r < $4) $8= $4-$9+r; else $8= $4;
+            $9= -$9;
+        }
+        $7= "="; $11= $10;
+    } n=="true" {gsub(/B|R|S|W|K|M|Y|H|V|D/, "N", $10)} {gsub(/./, bq, $11)} {print}' | \
+cat "${TMPSAM}.header" - | \
+samtools view -@ ${THREADS} -bo "${OUTPUT}" - \
+&& rm "${TMPBED}" && rm "${TMPSAM}" && rm "${TMPSAM}.header"
+
+if [[ -f "${TMPSAM}" ]]; then
+    echo "ERROR: Something went wrong while converting ${TMPBED} and ${TMPSAM} to the final ${OUTPUT} BAM file" >&2
+    echo "The intermediate files ${TMPBED}, ${TMPSAM} and ${TMPSAM}.header are kept for inspection" >&2
+    rm -f "${OUTPUT}"
+    exit 1
+fi
+
+if [[ $SORT == true ]]; then
+    UNSORTED=${OUTPUT/%.bam/.unsorted.bam}
+    mv "${OUTPUT}" "${UNSORTED}"
+    samtools sort -@ ${THREADS} "${UNSORTED}" -o "${OUTPUT}" || { echo "ERROR: samtools sort failed for ${UNSORTED}" >&2; exit 1; }
+    samtools index -@ ${THREADS} "${OUTPUT}" || { echo "ERROR: samtools index failed for ${OUTPUT}" >&2; exit 1; }
+    rm "${UNSORTED}"
+fi
+# ---- end of the upstream part ----
+
+N_READS=$(samtools idxstats "${OUTPUT}" | awk '{n+=$3+$4} END {print n+0}')
+if [[ "${N_READS}" -ne "${N_READS_EXPECTED}" ]]; then
+    echo "ERROR: ${OUTPUT} holds ${N_READS} reads, expected ${N_READS_EXPECTED}; removing it" >&2
+    rm -f "${OUTPUT}" "${OUTPUT}.bai"
+    exit 1
+fi
+echo "${OUTPUT}: ${N_READS} reads ($((N_READS / 2)) fragments with MAPQ > ${MAP_QUALITY_FILTER})"
+
+if [[ ${BIGWIG} == true ]]; then
+    bamCoverage -b "${OUTPUT}" -o "${OUTPUT/%.bam/.bw}" -p 1
+fi
+
+echo "Finished ${OUTPUT}"

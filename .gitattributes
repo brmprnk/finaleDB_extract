@@ -1,0 +1,12 @@
+# Scripts and site files run on Linux clusters: always LF, also when checked out on Windows (core.autocrlf)
+*.sh text eol=lf
+*.sbatch text eol=lf
+*.env text eol=lf
+slurm/site.env.example text eol=lf
+*.py text eol=lf
+*.diff text eol=lf
+*.def text eol=lf
+lists/* text eol=lf
+
+# pixi lock file: generated
+pixi.lock merge=binary linguist-language=YAML linguist-generated=true

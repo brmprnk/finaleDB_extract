@@ -1,0 +1,24 @@
+# Apptainer container with the locked pixi environment of this repository (pixi.toml + pixi.lock).
+# For clusters whose shared storage does not allow pixi to set file permissions (e.g. SMB/CIFS mounts):
+# the environment lives inside the image, and the image is a single file.
+#
+#   apptainer build preprocessing.sif container.def
+#   apptainer exec --bind /path/to/storage preprocessing.sif samtools --version
+
+Bootstrap: docker
+From: ghcr.io/prefix-dev/pixi:0.80.0
+
+%files
+    pixi.toml /opt/app/pixi.toml
+    pixi.lock /opt/app/pixi.lock
+
+%post
+    cd /opt/app
+    pixi install --frozen
+    rm -rf ~/.cache/rattler
+
+%environment
+    export PATH=/opt/app/.pixi/envs/default/bin:${PATH}
+
+%runscript
+    exec "$@"

@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite it and Fragmentstein (Balázs et al. 2024, listed below)."
+title: "finaleDB_extract: FinaleDB download and BAM reconstruction"
+version: 1.0.0
+license: GPL-3.0-only
+repository-code: "https://github.com/brmprnk/finaleDB_extract"
+authors:
+  - family-names: Pronk
+    given-names: Bram
+references:
+  - type: article
+    title: "Fragmentstein—facilitating data reuse for cell-free DNA fragment analysis"
+    authors:
+      - family-names: Balázs
+        given-names: Zsolt
+      - family-names: Gitchev
+        given-names: Todor
+      - family-names: Ivanković
+        given-names: Ivna
+      - family-names: Krauthammer
+        given-names: Michael
+    journal: Bioinformatics
+    volume: 40
+    issue: 1
+    year: 2024
+    doi: 10.1093/bioinformatics/btae017

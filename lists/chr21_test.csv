@@ -1,0 +1,23 @@
+# chr21 test set: 10 healthy, 5 breast cancer and 5 colorectal cancer records of the Cristiano et al. 2019 cohort;
+# per class the records whose FinaleDB fragment count is closest to the class median.
+ID,sample_name,disease,class
+EE88011,CGPLH388,Healthy,healthy
+EE88055,CGPLH429,Healthy,healthy
+EE88065,CGPLH439,Healthy,healthy
+EE88075,CGPLH449,Healthy,healthy
+EE88083,CGPLH456,Healthy,healthy
+EE88100,CGPLH472,Healthy,healthy
+EE88105,CGPLH477,Healthy,healthy
+EE88114,CGPLH485,Healthy,healthy
+EE88115,CGPLH486,Healthy,healthy
+EE88117,CGPLH488,Healthy,healthy
+EE87818,CGPLBR23,Breast cancer,cancer
+EE87826,CGPLBR35,Breast cancer,cancer
+EE87827,CGPLBR36,Breast cancer,cancer
+EE87839,CGPLBR52,Breast cancer,cancer
+EE87846,CGPLBR63,Breast cancer,cancer
+EE87867,CGCRC293,Colorectal cancer,cancer
+EE87876,CGCRC306,Colorectal cancer,cancer
+EE87877,CGCRC307,Colorectal cancer,cancer
+EE87878,CGCRC308,Colorectal cancer,cancer
+EE87886,CGCRC321,Colorectal cancer,cancer

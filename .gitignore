@@ -1,3 +1,35 @@
-slurm_*
-*.csv
-/reference_genome
+# Data. On the cluster this repository can live inside the preprocessing folder itself, next to the data folders.
+/cris/
+/jiang/
+/*_frag/
+/lucas/
+/mathios/
+/reference_genome/
+/chr21_test/
+*.bam
+*.bai
+*.bgz
+*.tbi
+*.bw
+*.wig
+# local tables at the top level (the tracked lists are in lists/)
+/*.csv
+
+# logs
+logs/*
+!logs/.gitkeep
+slurm_*.out
+slurm_*.err
+
+# site settings of the slurm wrappers (template: slurm/site.env.example)
+slurm/site.env
+slurm/site.*.env
+!slurm/site.env.example
+
+# environments
+.pixi/
+__pycache__/
+*.py[cod]
+
+# Apptainer image built from container.def
+*.sif
